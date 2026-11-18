@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, verify as verifyDetached } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import test from "node:test";
@@ -17,6 +18,8 @@ const envelope = {
   message: "游戏轮到你了。请调用 Garden MCP 的 get_my_status 查看当前局面。",
 };
 
+const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+
 test("posts a privacy-safe Garden wake to the Work event ingress", async () => {
   let received;
   const server = createServer(async (request, response) => {
@@ -34,17 +37,26 @@ test("posts a privacy-safe Garden wake to the Work event ingress", async () => {
   const address = server.address();
   try {
     const result = await inject(envelope, {
-      token: "test-token-that-is-long-enough",
-      url: `http://127.0.0.1:${address.port}/work/events`,
+      privateKey,
+      url: `http://127.0.0.1:${address.port}/work/garden-events`,
       now: 1_800_000,
     });
     assert.equal(result.accepted, true);
-    assert.equal(received.authorization, "Bearer test-token-that-is-long-enough");
-    assert.deepEqual(received.body, {
-      eventId: eventId(envelope, 1_800_000),
-      source: "galatea.garden.bridge",
-      text: envelope.message,
-    });
+    assert.equal(received.authorization, undefined);
+    assert.equal(received.body.eventId, eventId(envelope, 1_800_000));
+    assert.equal(received.body.timestamp, 1800);
+    assert.equal(received.body.text, envelope.message);
+    assert.equal(typeof received.body.signature, "string");
+    assert.equal(verifyDetached(
+      null,
+      Buffer.from(JSON.stringify([
+        received.body.eventId,
+        received.body.timestamp,
+        received.body.text,
+      ])),
+      publicKey,
+      Buffer.from(received.body.signature, "base64url"),
+    ), true);
   } finally {
     server.close();
     await once(server, "close");
@@ -74,8 +86,8 @@ test("does not acknowledge an ingress without an active subscriber", async () =>
   try {
     await assert.rejects(
       inject(envelope, {
-        token: "test-token-that-is-long-enough",
-        url: `http://127.0.0.1:${address.port}/work/events`,
+        privateKey,
+        url: `http://127.0.0.1:${address.port}/work/garden-events`,
       }),
       /no active subscriber/,
     );
