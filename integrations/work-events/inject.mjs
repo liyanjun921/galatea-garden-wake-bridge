@@ -64,7 +64,11 @@ export function eventId(envelope, now = Date.now()) {
 export async function inject(envelope, options = {}) {
   const target = parseTarget(options.url ?? process.env.WORK_EVENTS_URL);
   const now = options.now ?? Date.now();
-  const id = eventId(envelope, now);
+  if (options.deliveryId !== undefined &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(options.deliveryId)) {
+    throw new InjectorError("invalid Garden delivery ID");
+  }
+  const id = options.deliveryId ? `garden_${options.deliveryId}` : eventId(envelope, now);
   const timestamp = Math.floor(now / 1000);
   let privateKey = options.privateKey;
   if (!privateKey) {
