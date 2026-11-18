@@ -19,6 +19,7 @@ const envelope = {
 };
 
 const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+const deliveryId = "ee2d1438-b2e5-4cfb-bd77-016b8af97604";
 
 test("posts a privacy-safe Garden wake to the Work event ingress", async () => {
   let received;
@@ -40,10 +41,11 @@ test("posts a privacy-safe Garden wake to the Work event ingress", async () => {
       privateKey,
       url: `http://127.0.0.1:${address.port}/work/garden-events`,
       now: 1_800_000,
+      deliveryId,
     });
     assert.equal(result.accepted, true);
     assert.equal(received.authorization, undefined);
-    assert.equal(received.body.eventId, eventId(envelope, 1_800_000));
+    assert.equal(received.body.eventId, `garden_${deliveryId}`);
     assert.equal(received.body.timestamp, 1800);
     assert.equal(received.body.text, envelope.message);
     assert.equal(typeof received.body.signature, "string");
