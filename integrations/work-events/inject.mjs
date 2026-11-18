@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, sign as signDetached } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { isIP } from "node:net";
 
 export class InjectorError extends Error {}
@@ -34,7 +35,7 @@ export function parseEnvelope(raw) {
 
 export function parseTarget(raw) {
   const target = new URL(
-    raw ?? "https://xlc-general-bridge-lyj.onrender.com/work/events",
+    raw ?? "https://xlc-general-bridge-lyj.onrender.com/work/garden-events",
   );
   const loopback = target.hostname === "localhost" ||
     target.hostname === "127.0.0.1" || target.hostname === "::1";
@@ -61,22 +62,43 @@ export function eventId(envelope, now = Date.now()) {
 }
 
 export async function inject(envelope, options = {}) {
-  const token = options.token ?? process.env.WORK_EVENTS_INGEST_TOKEN;
-  if (typeof token !== "string" || token.length < 24) {
-    throw new InjectorError("WORK_EVENTS_INGEST_TOKEN is missing or too short");
-  }
   const target = parseTarget(options.url ?? process.env.WORK_EVENTS_URL);
-  const id = eventId(envelope, options.now ?? Date.now());
+  const now = options.now ?? Date.now();
+  const id = eventId(envelope, now);
+  const timestamp = Math.floor(now / 1000);
+  let privateKey = options.privateKey;
+  if (!privateKey) {
+    const privateKeyFile = options.privateKeyFile ??
+      process.env.WORK_EVENTS_GARDEN_PRIVATE_KEY_FILE;
+    if (!privateKeyFile) {
+      throw new InjectorError("WORK_EVENTS_GARDEN_PRIVATE_KEY_FILE is missing");
+    }
+    try {
+      privateKey = await readFile(privateKeyFile, "utf8");
+    } catch {
+      throw new InjectorError("Garden signing key could not be read");
+    }
+  }
+  let signature;
+  try {
+    signature = signDetached(
+      null,
+      Buffer.from(JSON.stringify([id, timestamp, envelope.message])),
+      privateKey,
+    ).toString("base64url");
+  } catch {
+    throw new InjectorError("Garden signing key is invalid");
+  }
   const response = await fetch(target, {
     method: "POST",
     headers: {
-      authorization: `Bearer ${token}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
       eventId: id,
-      source: "galatea.garden.bridge",
+      timestamp,
       text: envelope.message,
+      signature,
     }),
     signal: AbortSignal.timeout(options.timeoutMs ?? 10_000),
     redirect: "error",
